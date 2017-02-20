@@ -6,6 +6,15 @@
 
 For now, `amorphous` has a limited API, but in the future it might mature into a feature rich toolkit for working with Scala types
 
+##Installation
+
+In your `build.sbt`, use the following settings:
+
+```scala
+resolvers += "steefh bintray" at "https://dl.bintray.com/steefh/maven"
+libraryDependencies += "io.github.steefh" %% "amorphous" % "0.1.2"
+```
+
 ##Features
 
 ##`patchedWith`
