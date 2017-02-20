@@ -26,3 +26,4 @@ scalacOptions ++= Seq(
 )
 
 licenses += ("MIT", url("http://opensource.org/licenses/MIT"))
+releaseCrossBuild := true
