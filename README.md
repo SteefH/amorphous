@@ -1,5 +1,7 @@
 #`amorphous`
 
+[![Travis build status](https://travis-ci.org/SteefH/amorphous.svg?branch=master "Travis build status")](https://travis-ci.org/SteefH/amorphous)
+
 `amorphous` is a Scala library for Scala 2.11.x and 2.12.x built on top of [`shapeless`](https://github.com/milessabin/shapeless) that offers methods to reduce boilerplate in your Scala code.
 
 For now, `amorphous` has a limited API, but in the future it might mature into a feature rich toolkit for working with Scala types
