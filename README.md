@@ -17,8 +17,8 @@ libraryDependencies += "io.github.steefh" %% "amorphous" % "0.2.0"
 
 ##Features
 
- * [`patchedWith`](#patchedWith) - Updating values in a case class instance using the fields of another, unrelated case class instance
- * [`extractedTo`](#extractedTo) - Getting a subset of the fields in a case class instance and use them in another case class
+ * [`patchedWith`](#patchedwith) - Updating values in a case class instance using the fields of another, unrelated case class instance
+ * [`extractedTo`](#extractedto) - Getting a subset of the fields in a case class instance and use them in another case class
 
 ##patchedWith
 
