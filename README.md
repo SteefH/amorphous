@@ -12,12 +12,15 @@ In your `build.sbt`, use the following settings:
 
 ```scala
 resolvers += "steefh bintray" at "https://dl.bintray.com/steefh/maven"
-libraryDependencies += "io.github.steefh" %% "amorphous" % "0.1.2"
+libraryDependencies += "io.github.steefh" %% "amorphous" % "0.2.0"
 ```
 
 ##Features
 
-##`patchedWith`
+ * [`patchedWith`](#patchedWith) - Updating values in a case class instance using the fields of another, unrelated case class instance
+ * [`extractedTo`](#extractedTo) - Getting a subset of the fields in a case class instance and use them in another case class
+
+##patchedWith
 
 This problem might be familiar: you have a case class representing some state, and you want to update that state with values from another case class. For instance:
 
@@ -96,8 +99,9 @@ scala> case class WithUnknownField(unknownField: String)
 defined class WithUnknownField
 
 scala> val patched = Obj(1, "a") patchedWith WithUnknownField("g")
-<console>:18: error: No FieldSubsetPatcher for SourceRepr with PatchRepr
+<console>:21: error: Type Obj cannot be patched by type WithUnknownField
        val patched = Obj(1, "a") patchedWith WithUnknownField("g")
+                                 ^
 ```
 
 The patching type's fields should be of the same type as the fields in the type being patched, or an `Option` of the field type in the type being patched:
@@ -107,8 +111,9 @@ scala> case class WithOtherFieldType(intValue: String)
 defined class WithOtherFieldType
 
 scala> val patched = Obj(1, "a") patchedWith WithOtherFieldType("g")
-<console>:18: error: No FieldSubsetPatcher for SourceRepr with PatchRepr
+<console>:21: error: Type Obj cannot be patched by type WithOtherFieldType
        val patched = Obj(1, "a") patchedWith WithOtherFieldType("g")
+                                 ^
 ```
 
 ### Nested objects
@@ -156,4 +161,46 @@ patched: WithNestedObjOption = WithNestedObjOption(Some(Obj(2,a)))
 
 scala> val patched = WithNestedObjOption(Some(Obj(1, "a"))) patchedWith WithNestedPatchOption(None)
 patched: WithNestedObjOption = WithNestedObjOption(Some(Obj(1,a)))
+```
+
+## extractedTo
+
+`extractedTo` lets you move fields from a case class instance to a new instance of a case class unrelated to the original case class. An example from a REPL session:
+
+```scala
+scala> import io.github.steefh.amorphous.extract._
+import io.github.steefh.amorphous.extract._
+
+scala> case class Foo(i: Int, s: String, b: Boolean)
+defined class Foo
+
+scala> case class Bar(b: Boolean, i: Int)
+defined class Bar
+
+scala> val extractedBar = Foo(1, "abc", false).extractedTo[Bar]
+extractedBar: Bar = Bar(false,1)
+```
+
+Compilation will fail when the target type has fields not in the original type (continuing the REPL session):
+
+```scala
+scala> case class Baz(notInFoo: Int)
+defined class Baz
+
+scala> val extractedBaz = Foo(1, "abc", false).extractedTo[Baz]
+<console>:18: error: Type Baz cannot be extracted from Foo
+       val extractedBaz = Foo(1, "abc", false).extractedTo[Baz]
+                                                          ^
+```
+
+Compilation will also fail when the target type's fields have a different type than the ones in the original type:
+
+```scala
+scala> case class WithIncompatibleType(b: Long)
+defined class WithIncompatibleType
+
+scala> val extractedBaz = Foo(1, "abc", false).extractedTo[WithIncompatibleType]
+<console>:18: error: Type WithIncompatibleType cannot be extracted from Foo
+       val extractedBaz = Foo(1, "abc", false).extractedTo[WithIncompatibleType]
+                                                          ^
 ```

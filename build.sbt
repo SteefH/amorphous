@@ -23,6 +23,7 @@ scalacOptions ++= Seq(
   "-Ywarn-numeric-widen",
   "-Ywarn-value-discard",
   "-Xfatal-warnings"
+//  , "-Xlog-implicits"
 )
 
 licenses += ("MIT", url("http://opensource.org/licenses/MIT"))

@@ -1,12 +1,13 @@
 package io.github.steefh.amorphous
 
+import scala.annotation.implicitNotFound
+
 package object patch {
   import shapeless._
   import labelled._
   import record._
   import ops.record._
 
-  @annotation.implicitNotFound(msg = "No field patch for ${Value} with ${ValuePatch}")
   trait FieldPatcher[Value, ValuePatch] {
     def apply(value: Value, patch: ValuePatch): Value
   }
@@ -39,62 +40,61 @@ package object patch {
       case (None, _) => None
     }
 
-  implicit def patchProductWithPatchOption[Obj <: Product, Patch <: Product, ObjRepr <: HList, PatchRepr <: HList](
+  implicit def patchProductWithPatchOption[Target <: Product, Patch <: Product, TargetRepr <: HList, PatchRepr <: HList](
       implicit
-      sourceGen: LabelledGeneric.Aux[Obj, ObjRepr],
+      sourceGen: LabelledGeneric.Aux[Target, TargetRepr],
       patchGen: LabelledGeneric.Aux[Patch, PatchRepr],
-      patcher: FieldSubsetPatcher[ObjRepr, PatchRepr]
-  ): FieldPatcher[Obj, Option[Patch]] =
+      patcher: FieldSubsetPatcher[TargetRepr, PatchRepr]
+  ): FieldPatcher[Target, Option[Patch]] =
     FieldPatcher {
       case (e, Some(u)) => e patchedWith u
       case (e, None) => e
     }
-  implicit def patchProductWithPatch[Obj <: Product, Patch <: Product, ObjRepr <: HList, PatchRepr <: HList](
+  implicit def patchProductWithPatch[Target <: Product, Patch <: Product, TargetRepr <: HList, PatchRepr <: HList](
       implicit
-      sourceGen: LabelledGeneric.Aux[Obj, ObjRepr],
+      sourceGen: LabelledGeneric.Aux[Target, TargetRepr],
       patchGen: LabelledGeneric.Aux[Patch, PatchRepr],
-      patcher: FieldSubsetPatcher[ObjRepr, PatchRepr]
-  ): FieldPatcher[Obj, Patch] = FieldPatcher {
+      patcher: FieldSubsetPatcher[TargetRepr, PatchRepr]
+  ): FieldPatcher[Target, Patch] = FieldPatcher {
     (e, u) => e patchedWith u
   }
 
-  implicit def patchProductWithProduct[Obj <: Product]: FieldPatcher[Obj, Obj] =
+  implicit def patchProductWithProduct[Target <: Product]: FieldPatcher[Target, Target] =
     FieldPatcher {
       (_, u) => u
     }
 
-  implicit def patchProductWithProductOption[Obj <: Product]: FieldPatcher[Obj, Option[Obj]] =
+  implicit def patchProductWithProductOption[Target <: Product]: FieldPatcher[Target, Option[Target]] =
     FieldPatcher {
       case (_, Some(u)) => u
       case (e, None) => e
     }
 
-  implicit def patchProductOptionWithProductOption[Obj <: Product]: FieldPatcher[Option[Obj], Option[Obj]] =
+  implicit def patchProductOptionWithProductOption[Target <: Product]: FieldPatcher[Option[Target], Option[Target]] =
     FieldPatcher {
       case (e, None) => e
       case (_, u) => u
     }
 
-  @annotation.implicitNotFound(msg = "No FieldSubsetPatcher for ${SourceRepr} with ${PatchRepr}")
-  trait FieldSubsetPatcher[SourceRepr <: HList, PatchRepr <: HList] {
-    def apply(source: SourceRepr, patch: PatchRepr): SourceRepr
+  trait FieldSubsetPatcher[TargetRepr <: HList, PatchRepr <: HList] {
+    def apply(source: TargetRepr, patch: PatchRepr): TargetRepr
   }
 
-  implicit def deriveHNilPatcher[SourceRepr <: HList]: FieldSubsetPatcher[SourceRepr, HNil] =
-    new FieldSubsetPatcher[SourceRepr, HNil] {
-      override def apply(source: SourceRepr, patch: HNil): SourceRepr = source
+  implicit def deriveHNilPatcher[TargetRepr <: HList]: FieldSubsetPatcher[TargetRepr, HNil] =
+    new FieldSubsetPatcher[TargetRepr, HNil] {
+      override def apply(source: TargetRepr, patch: HNil): TargetRepr = source
     }
 
-  implicit def deriveHListPatcher[SourceRepr <: HList, Value, Key <: Symbol, PatchValue, Tail <: HList](
+  implicit def deriveHListPatcher[TargetRepr <: HList, Value, Key <: Symbol, PatchValue, Tail <: HList](
       implicit
       key: Witness.Aux[Key],
-      tailPatcher: FieldSubsetPatcher[SourceRepr, Tail],
-      selector: Selector.Aux[SourceRepr, Key, Value],
+      tailPatcher: FieldSubsetPatcher[TargetRepr, Tail],
+      selector: Selector.Aux[TargetRepr, Key, Value],
       valuePatcher: FieldPatcher[Value, PatchValue],
-      updater: Updater.Aux[SourceRepr, FieldType[Key, Value], SourceRepr]
-  ): FieldSubsetPatcher[SourceRepr, FieldType[Key, PatchValue] :: Tail] =
-    new FieldSubsetPatcher[SourceRepr, FieldType[Key, PatchValue] :: Tail] {
-      override def apply(sourceRepr: SourceRepr, patch: FieldType[Key, PatchValue] :: Tail): SourceRepr = {
+      updater: Updater.Aux[TargetRepr, FieldType[Key, Value], TargetRepr]
+  ): FieldSubsetPatcher[TargetRepr, FieldType[Key, PatchValue] :: Tail] =
+    new FieldSubsetPatcher[TargetRepr, FieldType[Key, PatchValue] :: Tail] {
+      override def apply(sourceRepr: TargetRepr, patch: FieldType[Key, PatchValue] :: Tail): TargetRepr = {
         val patchedTail = tailPatcher(sourceRepr, patch.tail)
         val sourceValue = selector(patchedTail)
         val patchedValue = valuePatcher(sourceValue, patch.head)
@@ -102,13 +102,27 @@ package object patch {
       }
     }
 
+  @implicitNotFound("Type ${Target} cannot be patched by type ${Patch}")
+  trait PatchedWithOp[Target, Patch] {
+    def apply(target: Target, patch: Patch): Target
+  }
 
-  implicit class PatchSyntax[Source <: Product](val source: Source) extends AnyVal {
-    def patchedWith[Patch <: Product, SourceRepr <: HList, PatchRepr <: HList](patch: Patch)(
+  object PatchedWithOp {
+    implicit def patchedWithOp[Target, TargetRepr <: HList, Patch <: Product, PatchRepr <: HList](
         implicit
-        sourceGen: LabelledGeneric.Aux[Source, SourceRepr],
+        sourceGen: LabelledGeneric.Aux[Target, TargetRepr],
         patchGen: LabelledGeneric.Aux[Patch, PatchRepr],
-        patcher: FieldSubsetPatcher[SourceRepr, PatchRepr]
-    ): Source = sourceGen from patcher(sourceGen to source, patchGen to patch)
+        patcher: FieldSubsetPatcher[TargetRepr, PatchRepr]
+    ): PatchedWithOp[Target, Patch] = new PatchedWithOp[Target, Patch] {
+      def apply(target: Target, patch: Patch): Target =
+        sourceGen from patcher(sourceGen to target, patchGen to patch)
+    }
+  }
+
+  implicit class PatchedWithSyntax[Target <: Product](val target: Target) extends AnyVal {
+    def patchedWith[Patch <: Product](patch: Patch)(
+        implicit
+        patchedWithOp: PatchedWithOp[Target, Patch]
+    ): Target = patchedWithOp(target, patch)
   }
 }
