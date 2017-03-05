@@ -8,6 +8,7 @@ package object patch {
   import record._
   import ops.record._
 
+  @implicitNotFound("Cannot patch a field of type ${Value} with a field of type ${ValuePatch}")
   trait FieldPatcher[Value, ValuePatch] {
     def apply(value: Value, patch: ValuePatch): Value
   }
@@ -19,6 +20,8 @@ package object patch {
       }
   }
 
+
+
   implicit def simplePatch[Value]: FieldPatcher[Value, Value] =
     FieldPatcher { (_, v) => v }
 
@@ -27,6 +30,13 @@ package object patch {
 
   implicit def patchValueOptionWithValueOption[Value]: FieldPatcher[Option[Value], Option[Value]] =
     FieldPatcher { (e, u) => u orElse e }
+
+  implicit def patchMapWithMapOfOptions[K, V]: FieldPatcher[Map[K, V], Map[K, Option[V]]] =
+    FieldPatcher { (e, u) => u.foldLeft(e) {
+      case (acc, (k, Some(v))) => acc + (k -> v)
+      case (acc, (k, None)) => acc - k
+    }}
+
 
   implicit def patchProductOptionWithPatchOption[Obj <: Product, Patch <: Product, ObjRepr <: HList, PatchRepr <: HList](
     implicit
@@ -85,12 +95,29 @@ package object patch {
       override def apply(source: TargetRepr, patch: HNil): TargetRepr = source
     }
 
+  @implicitNotFound("Cannot patch a field of type ${V} with a field of type ${P}")
+  trait FieldPatchedWithOp[V, P] {
+    def apply(v: V, p: P): V
+  }
+
+
+  object FieldPatchedWithOp {
+    def apply[V, P](implicit patcher: FieldPatcher[V, P]): FieldPatchedWithOp[V, P] = new FieldPatchedWithOp[V, P] {
+      override def apply(v: V, p: P): V = patcher(v, p)
+    }
+  }
+
+  implicit class FieldPatchedWithSyntax[V](val v: V) extends AnyVal {
+    def fieldPatchedWith[P](p: P)(implicit op: FieldPatchedWithOp[V, P]): V = op(v, p)
+  }
+
   implicit def deriveHListPatcher[TargetRepr <: HList, Value, Key <: Symbol, PatchValue, Tail <: HList](
       implicit
       key: Witness.Aux[Key],
       tailPatcher: FieldSubsetPatcher[TargetRepr, Tail],
       selector: Selector.Aux[TargetRepr, Key, Value],
       valuePatcher: FieldPatcher[Value, PatchValue],
+//      valuePatcher: FieldPatchedWithOp[Value, PatchValue],
       updater: Updater.Aux[TargetRepr, FieldType[Key, Value], TargetRepr]
   ): FieldSubsetPatcher[TargetRepr, FieldType[Key, PatchValue] :: Tail] =
     new FieldSubsetPatcher[TargetRepr, FieldType[Key, PatchValue] :: Tail] {

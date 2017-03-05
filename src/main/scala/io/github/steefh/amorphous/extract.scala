@@ -1,27 +1,28 @@
 package io.github.steefh.amorphous
 
-import scala.annotation.implicitNotFound
+
 
 
 package object extract {
 
+  import scala.annotation.implicitNotFound
   import shapeless.labelled.FieldType
-  import shapeless.ops.record.{Keys, Selector}
+  import shapeless.ops.record._
   import shapeless.{HList, ::, HNil, LabelledGeneric}
 
-  trait Extractor[SourceRepr, TargetKeys] {
+  trait ExtractTo[SourceRepr, TargetKeys] {
     type Out
 
     def apply(s: SourceRepr, t: TargetKeys): Out
   }
 
 
-  object Extractor {
+  object ExtractTo {
     type Aux[S, T, O] =
-      Extractor[S, T] {type Out = O}
+      ExtractTo[S, T] {type Out = O}
 
     implicit def hnilExtractor[SourceRepr]: Aux[SourceRepr, HNil, HNil] =
-      new Extractor[SourceRepr, HNil] {
+      new ExtractTo[SourceRepr, HNil] {
         type Out = HNil
 
         def apply(s: SourceRepr, t: HNil): HNil = HNil
@@ -32,7 +33,7 @@ package object extract {
         tailExtractor: Aux[SourceRepr, KeysTail, FieldsTail],
         selector: Selector.Aux[SourceRepr, Key, Value]
     ): Aux[SourceRepr, Key :: KeysTail, FieldType[Key, Value] :: FieldsTail] =
-      new Extractor[SourceRepr, Key :: KeysTail] {
+      new ExtractTo[SourceRepr, Key :: KeysTail] {
         type Out = FieldType[Key, Value] :: FieldsTail
 
         override def apply(s: SourceRepr, t: Key :: KeysTail): FieldType[Key, Value] :: FieldsTail = {
@@ -52,7 +53,7 @@ package object extract {
       sourceGen: LabelledGeneric.Aux[Source, SourceRepr],
       targetGen: LabelledGeneric.Aux[Target, TargetRepr],
       keys: Keys.Aux[TargetRepr, TargetKeys],
-      extractor: Extractor.Aux[SourceRepr, TargetKeys, TargetRepr]
+      extractor: ExtractTo.Aux[SourceRepr, TargetKeys, TargetRepr]
     ): ExtractedToOp[Source, Target] = new ExtractedToOp[Source, Target] {
       override def apply(v: Source): Target =
         targetGen.from(extractor(sourceGen.to(v), keys()))
@@ -64,5 +65,65 @@ package object extract {
       extractorOp(value)
     }
   }
+
+
+  trait ExtractInto[SourceRepr, TargetRepr] {
+    def apply(s: SourceRepr, t: TargetRepr): TargetRepr
+  }
+  object ExtractInto {
+    implicit def hnilExtractInto[TargetRepr <: HList]: ExtractInto[HNil, TargetRepr] = new ExtractInto[HNil, TargetRepr] {
+      override def apply(s: HNil, t: TargetRepr): TargetRepr = t
+    }
+    implicit def hlistHeadKeyUnknownExtractInto[K, V, Rest <: HList, TargetRepr <: HList](
+        implicit
+//        targetKeys: Keys.Aux[TargetRepr, TargetKeys],
+        lacksKey: LacksKey[TargetRepr, K],
+        tailExtractInto: ExtractInto[Rest, TargetRepr]
+    ): ExtractInto[FieldType[K, V] :: Rest, TargetRepr] =
+      new ExtractInto[FieldType[K, V] :: Rest, TargetRepr] {
+        override def apply(s: FieldType[K, V] :: Rest, t: TargetRepr): TargetRepr = {
+          tailExtractInto(s.tail, t)
+        }
+      }
+
+    implicit def hlistHeadKeyKnownExtractInto[K, V, Rest <: HList, TargetRepr <: HList](
+        implicit
+        updater: Updater.Aux[TargetRepr, FieldType[K, V], TargetRepr],
+        tailExtractInto: ExtractInto[Rest, TargetRepr]
+    ): ExtractInto[FieldType[K, V] :: Rest, TargetRepr] =
+      new ExtractInto[FieldType[K, V] :: Rest, TargetRepr] {
+        override def apply(s: FieldType[K, V] :: Rest, t: TargetRepr): TargetRepr = {
+          tailExtractInto(s.tail, updater(t, s.head))
+        }
+      }
+  }
+
+
+
+  @implicitNotFound("Cannot extract ${Source} into ${Target}")
+  trait ExtractedIntoOp[Source, Target] {
+    def apply(s: Source, t: Target): Target
+  }
+
+  object ExtractedIntoOp {
+    implicit def extractedIntoOp[Source, Target, SourceRepr <: HList, TargetRepr <: HList](
+        implicit
+        sourceGen: LabelledGeneric.Aux[Source, SourceRepr],
+        targetGen: LabelledGeneric.Aux[Target, TargetRepr],
+        extractInto: ExtractInto[SourceRepr, TargetRepr]
+    ): ExtractedIntoOp[Source, Target] = new ExtractedIntoOp[Source, Target] {
+      override def apply(s: Source, t: Target): Target = {
+        targetGen.from(extractInto(sourceGen.to(s), targetGen.to(t)))
+      }
+    }
+    def apply[Source, Target](implicit extractedIntoOp: ExtractedIntoOp[Source, Target]): ExtractedIntoOp[Source, Target] = extractedIntoOp
+  }
+
+  implicit class ExtractedIntoSyntax[Source](val source: Source) extends AnyVal {
+    def extractedInto[Target](target: Target)(implicit extractedIntoOp: ExtractedIntoOp[Source, Target]): Target = {
+      extractedIntoOp(source, target)
+    }
+  }
+
 
 }

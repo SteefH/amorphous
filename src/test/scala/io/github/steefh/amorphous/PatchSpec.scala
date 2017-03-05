@@ -5,14 +5,6 @@ import org.scalatest._
 class PatchSpec extends WordSpec with Matchers {
   import patch._
 
-  case class Foo(intValue: Int, stringValue: String, optionalBoolean: Option[Boolean])
-
-  case class FooUpdate(intValue: Int)
-
-  case class FooUpdateWithOptions(intValue: Option[Int], stringValue: Option[String])
-
-  case class CannotUpdateFoo(r: Boolean) // field r is not in Foo
-
   "patching an object of type A" when {
     "the original has a field of a non-Option type T" which {
       case class Obj(intValue: Int, stringValue: String)
@@ -227,15 +219,56 @@ class PatchSpec extends WordSpec with Matchers {
         }
       }
     }
-  }
+    "the original has a field of type Map[K, V]" which {
+      case class WithMap(mapping: Map[String, Int])
+      "is patched with an object of type B" which {
+        "has a field with the same name" which {
+          "has the same type Map[K, V]" should {
+            case class PatchWithMap(mapping: Map[String, Int])
+            "replace the value in the original" in {
+              WithMap(Map.empty) patchedWith PatchWithMap(Map("key" -> 1)) shouldBe WithMap(Map("key" -> 1))
+            }
+          }
+          "has a type of Map[K, Option[V]]" should {
+            case class PatchWithMap(mapping: Map[String, Option[Int]])
+            "add or replace items in the original mapping field when they are set to (key -> Some(value)) in the mapping field of the patching object" in {
+              WithMap(
+                Map("key" -> 1, "alreadyThere" -> 4)
+              ) patchedWith PatchWithMap(
+                Map("key" -> Some(2), "notThereYet" -> Some(1))
+              ) shouldBe WithMap(
+                Map("key" -> 2, "alreadyThere" -> 4, "notThereYet" -> 1)
+              )
+            }
+            "remove items in the original mapping field when they are set to (key -> None) in the mapping field of the patching object" in {
+              WithMap(
+                Map("key" -> 1, "alreadyThere" -> 4)
+              ) patchedWith PatchWithMap(
+                Map("key" -> None, "notThereYet" -> None)
+              ) shouldBe WithMap(
+                Map("alreadyThere" -> 4)
+              )
+            }
+          }
 
+        }
+      }
+
+    }
+  }
 
   "using patchWith with incompatible case classes" should {
     "fail compilation" in {
       """
+         case class Foo(intValue: Int, stringValue: String, optionalBoolean: Option[Boolean])
+         case class FooUpdate(intValue: Int)
+
          Foo(1, "a", None) patchedWith FooUpdate(2)
       """ should compile
       """
+         case class Foo(intValue: Int, stringValue: String, optionalBoolean: Option[Boolean])
+         case class CannotUpdateFoo(r: Boolean) // field r is not in Foo
+
          Foo(1, "a", None) patchedWith CannotUpdateFoo(false)
       """ shouldNot typeCheck
     }

@@ -7,7 +7,7 @@ class ExtractSpec extends WordSpec with Matchers {
   import extract._
 
   "extractedTo" should {
-    "extract fields from the source instance and put them in the target type's instance" in {
+    "extract fields from the source instance and put them in a target type's instance" in {
       case class Foo(i: Int, s: String, b: Boolean)
       case class Bar(b: Boolean, i: Int)
       Foo(1, "s", false).extractedTo[Bar] shouldBe Bar(false, 1)
@@ -27,6 +27,19 @@ class ExtractSpec extends WordSpec with Matchers {
         |
         | Source(1L).extractedTo[Target]
       """.stripMargin
+    }
+  }
+  "extractedInto" should {
+    "extract fields from the source case class instance and put them in a copy of the target instance" in {
+      case class Foo(i: Int, b: Boolean)
+      case class Bar(si: String, n: Boolean)
+      case class Baz(b: Boolean, n: Int)
+      case class FooPlus(i: Int, b: Boolean, extra: String)
+      Baz(b = false, n = 2) extractedInto Foo(i = 0, b = true) shouldBe Foo(i = 0, b = false)
+      Bar(si = "alse", n = false) extractedInto Foo(i = 0, b = true) shouldBe Foo(i = 0, b = true)
+      Foo(i = 0, b = true) extractedInto Bar(si = "fafas", n = true) shouldBe Bar(si = "fafas", n = true)
+      Foo(i = 0, b = true) extractedInto FooPlus(i = 1, b = false, extra = "extra") shouldBe FooPlus(i = 0, b = true, extra = "extra")
+      FooPlus(i = 0, b = true, extra = "extra") extractedInto Foo(i = 1, b = false) extractedInto Foo(i = 0, b = true)
     }
   }
 
