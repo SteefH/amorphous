@@ -2,13 +2,27 @@ package io.github.steefh.amorphous
 
 
 
-
 package object extract {
 
   import scala.annotation.implicitNotFound
   import shapeless.labelled.FieldType
+  import shapeless.labelled
   import shapeless.ops.record._
   import shapeless.{HList, ::, HNil, LabelledGeneric}
+
+  trait ExtractFieldMapper[From, To] {
+    def apply(from: From): To
+  }
+
+  object ExtractFieldMapper {
+    def apply[From, To](fn: From => To): ExtractFieldMapper[From, To] =
+      new ExtractFieldMapper[From, To] {
+        override def apply(from: From): To = fn(from)
+      }
+    implicit def simpleFieldMapper[T]: ExtractFieldMapper[T, T] = ExtractFieldMapper[T, T](identity)
+  }
+
+
 
   trait ExtractTo[SourceRepr, TargetKeys] {
     type Out
@@ -28,16 +42,18 @@ package object extract {
         def apply(s: SourceRepr, t: HNil): HNil = HNil
       }
 
-    implicit def hlistExtractor[SourceRepr <: HList, KeysTail <: HList, FieldsTail <: HList, Key, Value](
+    implicit def hlistExtractor[SourceRepr <: HList, KeysTail <: HList, FieldsTail <: HList, Key, VFrom, VTo](
         implicit
-        tailExtractor: Aux[SourceRepr, KeysTail, FieldsTail],
-        selector: Selector.Aux[SourceRepr, Key, Value]
-    ): Aux[SourceRepr, Key :: KeysTail, FieldType[Key, Value] :: FieldsTail] =
-      new ExtractTo[SourceRepr, Key :: KeysTail] {
-        type Out = FieldType[Key, Value] :: FieldsTail
 
-        override def apply(s: SourceRepr, t: Key :: KeysTail): FieldType[Key, Value] :: FieldsTail = {
-          shapeless.labelled.field[Key](selector(s)) :: tailExtractor(s, t.tail)
+        tailExtractor: Aux[SourceRepr, KeysTail, FieldsTail],
+        fieldMapper: ExtractFieldMapper[VFrom, VTo],
+        selector: Selector.Aux[SourceRepr, Key, VFrom]
+    ): Aux[SourceRepr, Key :: KeysTail, FieldType[Key, VTo] :: FieldsTail] =
+      new ExtractTo[SourceRepr, Key :: KeysTail] {
+        type Out = FieldType[Key, VTo] :: FieldsTail
+
+        override def apply(s: SourceRepr, t: Key :: KeysTail): FieldType[Key, VTo] :: FieldsTail = {
+          labelled.field[Key](fieldMapper(selector(s))) :: tailExtractor(s, t.tail)
         }
       }
   }
@@ -76,7 +92,6 @@ package object extract {
     }
     implicit def hlistHeadKeyUnknownExtractInto[K, V, Rest <: HList, TargetRepr <: HList](
         implicit
-//        targetKeys: Keys.Aux[TargetRepr, TargetKeys],
         lacksKey: LacksKey[TargetRepr, K],
         tailExtractInto: ExtractInto[Rest, TargetRepr]
     ): ExtractInto[FieldType[K, V] :: Rest, TargetRepr] =
@@ -86,14 +101,15 @@ package object extract {
         }
       }
 
-    implicit def hlistHeadKeyKnownExtractInto[K, V, Rest <: HList, TargetRepr <: HList](
+    implicit def hlistHeadKeyKnownExtractInto[K, VFrom, VTo, Rest <: HList, TargetRepr <: HList](
         implicit
-        updater: Updater.Aux[TargetRepr, FieldType[K, V], TargetRepr],
+        fieldMapper: ExtractFieldMapper[VFrom, VTo],
+        updater: Updater.Aux[TargetRepr, FieldType[K, VTo], TargetRepr],
         tailExtractInto: ExtractInto[Rest, TargetRepr]
-    ): ExtractInto[FieldType[K, V] :: Rest, TargetRepr] =
-      new ExtractInto[FieldType[K, V] :: Rest, TargetRepr] {
-        override def apply(s: FieldType[K, V] :: Rest, t: TargetRepr): TargetRepr = {
-          tailExtractInto(s.tail, updater(t, s.head))
+    ): ExtractInto[FieldType[K, VFrom] :: Rest, TargetRepr] =
+      new ExtractInto[FieldType[K, VFrom] :: Rest, TargetRepr] {
+        override def apply(s: FieldType[K, VFrom] :: Rest, t: TargetRepr): TargetRepr = {
+          tailExtractInto(s.tail, updater(t, labelled.field[K](fieldMapper(s.head))))
         }
       }
   }
