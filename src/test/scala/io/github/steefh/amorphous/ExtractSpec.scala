@@ -49,6 +49,12 @@ class ExtractSpec extends WordSpec with Matchers {
       Foo(1, n = Some(3L), b = false) extractedInto Bar("", None) shouldBe Bar("1", Some(3L))
     }
 
+    "options" in {
+      case class Foo(i: Option[Int])
+      case class Bar(i: Option[Long])
+      implicit val ll: FieldMapper[Int, Long] = FieldMapper {n: Int => n.toLong}
+      Foo(None).extractedTo[Bar]
+    }
   }
 
 }

@@ -76,7 +76,7 @@ package object extract {
         if tree == EmptyTree
       } yield s"Cannot find an implicit conversion for field '$name'.\n" +
         s"Make sure you have an implicit value of " +
-        s"io.github.steefh.amorphous.extract.FieldMapper[${fromType.typeSymbol.name}, ${toType.typeSymbol.name}] " +
+        s"io.github.steefh.amorphous.extract.FieldMapper[${fromType.resultType}, ${toType.resultType}] " +
         s"in scope."
       ).filterNot(_.isEmpty).map(_.mkString("\n")).foreach(c.error(c.enclosingPosition, _))
       toFields.keys map { name =>
@@ -103,7 +103,7 @@ package object extract {
       }
       Some(leftOverFields.map {
         case (name, fieldType) =>
-          s"${bType} contains a field '$name' of ${fieldType.typeSymbol} that is not in ${aType}"
+          s"${bType} contains a field '$name' of ${fieldType.resultType} that is not in ${aType}"
       }).filter(_.nonEmpty).map(_.mkString("\n")).foreach(c.error(c.enclosingPosition, _))
 
       val argList = argsList(fromFields, toFields)
