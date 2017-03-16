@@ -1,174 +1,156 @@
 package io.github.steefh.amorphous
 
-import shapeless.Witness
-
+import scala.reflect.macros.blackbox
 
 package object extract {
 
-  import scala.annotation.implicitNotFound
-  import shapeless.labelled.FieldType
-  import shapeless.labelled
-  import shapeless.record._
-  import shapeless.ops.record._
-  import shapeless.{HList, ::, HNil, LabelledGeneric}
-
-  @implicitNotFound("Cannot find mapping of type ${From}")
-  trait ExtractFieldMapper[From, To] {
-    def apply(from: From): To
+  trait FieldMapper[A, B] {
+    def apply(a: A): B
   }
-
-  object ExtractFieldMapper {
-    def apply[From, To](fn: From => To): ExtractFieldMapper[From, To] =
-      new ExtractFieldMapper[From, To] {
-        override def apply(from: From): To = fn(from)
+  object FieldMapper {
+    def apply[A, B](f: A => B): FieldMapper[A, B] = new FieldMapper[A, B] {
+      def apply(a: A): B = f(a)
+    }
+    implicit def optionFieldMapper[A, B](implicit mapper: FieldMapper[A, B]): FieldMapper[Option[A], Option[B]] =
+      FieldMapper { a: Option[A] =>
+        a map (mapper(_))
       }
   }
 
-  implicit def optionFieldMapper[T, O](implicit mapper: ExtractFieldMapper[T, O]): ExtractFieldMapper[Option[T], Option[O]] =
-    ExtractFieldMapper {t: Option[T] => t map mapper.apply}
-
-
-  trait ExtractTo[SourceRepr, TargetKeys] {
+  trait ExtractTo[A] {
     type Out
+    def apply(a: A): Out
+  }
+  trait LowPriorityExtractTo {
+    type Aux[A, B] = ExtractTo[A] { type Out = B }
+  }
+  object ExtractTo extends LowPriorityExtractTo {
+    implicit def materialize[A, B]: Aux[A, B] = macro ExtractMacros.extractedToMaterialize[A, B]
+  }
 
-    def apply(s: SourceRepr, t: TargetKeys): Out
+  implicit class ExtractToSyntax[A](value: A) {
+    def extractedTo[C](implicit op: ExtractTo.Aux[A, C]): C = op(value)
   }
 
 
-  object ExtractTo {
-    type Aux[S, T, O] =
-      ExtractTo[S, T] {type Out = O}
+  trait ExtractedInto[A] {
+    type Out
+    def apply(a: A, b: Out): Out
+  }
+  object ExtractedInto {
+    type Aux[A, B] = ExtractedInto[A] { type Out = B }
+    implicit def materialize[A, B]: Aux[A, B] = macro ExtractMacros.extractedIntoMaterialize[A, B]
+  }
+  implicit class ExtractedIntoSyntax[A](value: A) {
+    def extractedInto[B](b: B)(implicit op: ExtractedInto.Aux[A, B]): B = op(value, b)
+  }
 
-    implicit def hnilExtractor[SourceRepr]: Aux[SourceRepr, HNil, HNil] =
-      new ExtractTo[SourceRepr, HNil] {
-        type Out = HNil
+  @macrocompat.bundle
+  class ExtractMacros(val c: blackbox.Context) {
 
-        def apply(s: SourceRepr, t: HNil): HNil = HNil
-      }
+    import c.universe._
 
-    implicit def hlistMappedExtractor[SourceRepr <: HList, KeysTail <: HList, FieldsTail <: HList, Key, VFrom, VTo](
-        implicit
-        tailExtractor: Aux[SourceRepr, KeysTail, FieldsTail],
-        fieldMapper: ExtractFieldMapper[VFrom, VTo],
-        selector: Selector.Aux[SourceRepr, Key, VFrom]
-    ): Aux[SourceRepr, Key :: KeysTail, FieldType[Key, VTo] :: FieldsTail] =
-      new ExtractTo[SourceRepr, Key :: KeysTail] {
-        type Out = FieldType[Key, VTo] :: FieldsTail
-        override def apply(s: SourceRepr, t: Key :: KeysTail): FieldType[Key, VTo] :: FieldsTail = {
-          labelled.field[Key](fieldMapper(selector(s))) :: tailExtractor(s, t.tail)
+    private def fieldsMap(typ: Type): Map[TermName, Type] =
+      typ.decls
+        .collect { case m: MethodSymbol if m.isCaseAccessor => m.name -> m.info }
+        .toMap
+
+    private def companionRef(tpe: Type): Tree =
+      Option(tpe.companion)
+        .filter(_ != NoType)
+        .map(t => q"$t")
+        .getOrElse(Ident(tpe.typeSymbol.name.toTermName)) // Attempt to refer to local companion
+
+    private def implicitFM(fromType: c.Type, toType: c.Type): c.Tree =
+      c.typecheck(q"implicitly[_root_.io.github.steefh.amorphous.extract.FieldMapper[$fromType, $toType]]", silent = true)
+
+    private def argsList(fromFields: Map[TermName, Type], toFields: Map[TermName, Type]) = {
+      val implicitConversions = for {
+        (name, toType) <- toFields
+        fromType = fromFields(name)
+        if !(fromType <:< toType)
+      } yield (name, (fromType, toType, implicitFM(fromType, toType)))
+
+      Some(for {
+        (name, (fromType, toType, tree)) <- implicitConversions
+        if tree == EmptyTree
+      } yield s"Cannot find an implicit conversion for field '$name'.\n" +
+        s"Make sure you have an implicit value of " +
+        s"io.github.steefh.amorphous.extract.FieldMapper[${fromType.typeSymbol.name}, ${toType.typeSymbol.name}] " +
+        s"in scope."
+      ).filterNot(_.isEmpty).map(_.mkString("\n")).foreach(c.error(c.enclosingPosition, _))
+      toFields.keys map { name =>
+        implicitConversions.get(name).map {
+          case (_, _, tree) => q"$name=$tree(a.$name)"
+        } getOrElse {
+          q"$name=a.$name"
         }
       }
-    implicit def hlistUnmappedExtractor[SourceRepr <: HList, KeysTail <: HList, FieldsTail <: HList, Key, V](
-        implicit
-        tailExtractor: Aux[SourceRepr, KeysTail, FieldsTail],
-        selector: Selector.Aux[SourceRepr, Key, V]
-    ): Aux[SourceRepr, Key :: KeysTail, FieldType[Key, V] :: FieldsTail] =
-      new ExtractTo[SourceRepr, Key :: KeysTail] {
-        type Out = FieldType[Key, V] :: FieldsTail
-        override def apply(s: SourceRepr, t: Key :: KeysTail): FieldType[Key, V] :: FieldsTail = {
-          labelled.field[Key](selector(s)) :: tailExtractor(s, t.tail)
-        }
+    }
+
+
+    def extractedToMaterialize[A: c.WeakTypeTag, B: c.WeakTypeTag]: c.Tree  = {
+
+      val aType = weakTypeOf[A]
+      val bType = weakTypeOf[B]
+      val bCompanion = companionRef(bType)
+      val fromFields = fieldsMap(aType)
+      val toFields = fieldsMap(bType)
+
+
+      val leftOverFields = fromFields.foldLeft(toFields){
+        case (acc, (name, fieldType)) => acc - name
       }
-  }
+      Some(leftOverFields.map {
+        case (name, fieldType) =>
+          s"${bType} contains a field '$name' of ${fieldType.typeSymbol} that is not in ${aType}"
+      }).filter(_.nonEmpty).map(_.mkString("\n")).foreach(c.error(c.enclosingPosition, _))
 
-  @implicitNotFound("Type ${Target} cannot be extracted from ${Source}")
-  trait ExtractedToOp[Source, Target] {
-    def apply(v: Source): Target
-  }
+      val argList = argsList(fromFields, toFields)
 
-  object ExtractedToOp {
-    implicit def extractorOp[Source, Target, SourceRepr <: HList, TargetKeys <: HList, TargetRepr <: HList](
-      implicit
-      sourceGen: LabelledGeneric.Aux[Source, SourceRepr],
-      targetGen: LabelledGeneric.Aux[Target, TargetRepr],
-      keys: Keys.Aux[TargetRepr, TargetKeys],
-      extractor: ExtractTo.Aux[SourceRepr, TargetKeys, TargetRepr]
-    ): ExtractedToOp[Source, Target] = new ExtractedToOp[Source, Target] {
-      override def apply(v: Source): Target =
-        targetGen.from(extractor(sourceGen.to(v), keys()))
+      val result = q"""
+          new _root_.io.github.steefh.amorphous.extract.ExtractTo[${aType.typeSymbol}] {
+            type Out = $bType
+            def apply(a: $aType): $bType = ${bCompanion}(..${argList.toList})
+          }
+      """
+      //    c.error(c.enclosingPosition, weakTypeOf[B].companion.toString)
+//          c.error(c.enclosingPosition, result.toString)
+      //    q""
+      result
+    }
+
+    def extractedIntoMaterialize[A: c.WeakTypeTag, B: c.WeakTypeTag]: c.Tree  = {
+
+      val aType = weakTypeOf[A]
+      val bType = weakTypeOf[B]
+      val fromFields = fieldsMap(aType)
+      val toFields = fieldsMap(bType)
+
+      def intersect(a: Map[TermName, Type], b: Map[TermName, Type]): Map[TermName, Type] =
+        b.keys.foldLeft(Map.empty[TermName, Type]) {
+          case (acc, name) => a.get(name).map(t => acc + (name -> t)).getOrElse(acc)
+        }
+
+      val sharedFromFields = intersect(fromFields, toFields)
+      val sharedToFields = intersect(toFields, fromFields)
+
+      val argList = argsList(sharedFromFields, sharedToFields)
+
+      val result = q"""
+          new _root_.io.github.steefh.amorphous.extract.ExtractedInto[${aType.typeSymbol}] {
+            type Out = $bType
+            def apply(a: $aType, b: $bType): $bType = b.copy(..${argList.toList})
+          }
+      """
+      //    c.error(c.enclosingPosition, weakTypeOf[B].companion.toString)
+//                c.error(c.enclosingPosition, result.toString)
+      //    q""
+      result
     }
   }
 
-  implicit class ExtractedToSyntax[Source](val value: Source) extends AnyVal {
-    def extractedTo[Target](implicit extractorOp: ExtractedToOp[Source, Target]): Target = {
-      extractorOp(value)
-    }
-  }
 
-
-  trait ExtractInto[SourceRepr, TargetRepr] {
-    def apply(s: SourceRepr, t: TargetRepr): TargetRepr
-  }
-  object ExtractInto {
-    implicit def hnilExtractInto[TargetRepr <: HList]: ExtractInto[HNil, TargetRepr] = new ExtractInto[HNil, TargetRepr] {
-      override def apply(s: HNil, t: TargetRepr): TargetRepr = t
-    }
-    implicit def hlistHeadKeyUnknownExtractInto[K, V, Rest <: HList, TargetRepr <: HList](
-        implicit
-        lacksKey: LacksKey[TargetRepr, K],
-        tailExtractInto: ExtractInto[Rest, TargetRepr]
-    ): ExtractInto[FieldType[K, V] :: Rest, TargetRepr] =
-      new ExtractInto[FieldType[K, V] :: Rest, TargetRepr] {
-        override def apply(s: FieldType[K, V] :: Rest, t: TargetRepr): TargetRepr = {
-          tailExtractInto(s.tail, t)
-        }
-      }
-
-    implicit def hlistHeadKeyKnownMappedExtractInto[K, VFrom, VTo, Rest <: HList, TargetRepr <: HList](
-        implicit
-        fieldMapper: ExtractFieldMapper[VFrom, VTo],
-        selector: Selector.Aux[TargetRepr, K, VTo],
-        updater: Updater.Aux[TargetRepr, FieldType[K, VTo], TargetRepr],
-        key: Witness.Aux[K],
-        tailExtractInto: ExtractInto[Rest, TargetRepr]
-    ): ExtractInto[FieldType[K, VFrom] :: Rest, TargetRepr] =
-      new ExtractInto[FieldType[K, VFrom] :: Rest, TargetRepr] {
-        override def apply(s: FieldType[K, VFrom] :: Rest, t: TargetRepr): TargetRepr = {
-          val newValue = fieldMapper(s.head)
-          val updatedWithTail = tailExtractInto(s.tail, t)
-          updatedWithTail.replace(key, newValue)
-        }
-      }
-    implicit def hlistHeadKeyKnownUnmappedExtractInto[K, V, Rest <: HList, TargetRepr <: HList](
-        implicit
-//        selector: Selector.Aux[TargetRepr, K, V],
-        updater: Updater.Aux[TargetRepr, FieldType[K, V], TargetRepr],
-        key: Witness.Aux[K],
-        tailExtractInto: ExtractInto[Rest, TargetRepr]
-    ): ExtractInto[FieldType[K, V] :: Rest, TargetRepr] =
-      new ExtractInto[FieldType[K, V] :: Rest, TargetRepr] {
-        override def apply(s: FieldType[K, V] :: Rest, t: TargetRepr): TargetRepr = {
-          tailExtractInto(s.tail, updater(t, labelled.field[K](s.head)))
-        }
-      }
-  }
-
-
-
-//  @implicitNotFound("Cannot extract ${Source} into ${Target}")
-  trait ExtractedIntoOp[Source, Target] {
-    def apply(s: Source, t: Target): Target
-  }
-
-  object ExtractedIntoOp {
-    implicit def extractedIntoOp[Source, Target, SourceRepr <: HList, TargetRepr <: HList](
-        implicit
-        sourceGen: LabelledGeneric.Aux[Source, SourceRepr],
-        targetGen: LabelledGeneric.Aux[Target, TargetRepr],
-        extractInto: ExtractInto[SourceRepr, TargetRepr]
-    ): ExtractedIntoOp[Source, Target] = new ExtractedIntoOp[Source, Target] {
-      override def apply(s: Source, t: Target): Target = {
-        targetGen.from(extractInto(sourceGen.to(s), targetGen.to(t)))
-      }
-    }
-    def apply[Source, Target](implicit extractedIntoOp: ExtractedIntoOp[Source, Target]): ExtractedIntoOp[Source, Target] = extractedIntoOp
-  }
-
-  implicit class ExtractedIntoSyntax[Source](val source: Source) extends AnyVal {
-    def extractedInto[Target](target: Target)(implicit extractedIntoOp: ExtractedIntoOp[Source, Target]): Target = {
-      extractedIntoOp(source, target)
-    }
-  }
 
 
 }

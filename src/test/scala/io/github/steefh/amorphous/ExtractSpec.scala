@@ -44,9 +44,11 @@ class ExtractSpec extends WordSpec with Matchers {
     "stuff" in {
       case class Foo(i: Int, n: Option[Long], b: Boolean)
       case class Bar(i: String, n: Option[Long])
-      implicit val intToString: ExtractFieldMapper[Int, String] = ExtractFieldMapper {n: Int => n.toString }
+//      implicit val intToString: FieldMapper[Int, String] = ExtractFieldMapper {n: Int => n.toString }
+      implicit val intToString: FieldMapper[Int, String] = FieldMapper {n: Int => n.toString }
       Foo(1, n = Some(3L), b = false) extractedInto Bar("", None) shouldBe Bar("1", Some(3L))
     }
+
   }
 
 }
